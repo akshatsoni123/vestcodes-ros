@@ -3,11 +3,15 @@ import {
   BadRequestException,
   NotFoundException,
   UnauthorizedException,
+  Optional,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TableTokenService } from '../auth/table-token.service';
 import { CreateOrderDto } from './dto/create-order-dto';
 import { QueryOrdersDto } from './dto/query-order.dto';
+import { OrdersGateway } from '../gateway/orders.gateway';
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   pending:   ['approved', 'rejected'],
@@ -29,6 +33,8 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tableToken: TableTokenService,
+    @Optional() @Inject(forwardRef(() => OrdersGateway))
+    private readonly gateway?: OrdersGateway,
   ) {}
 
   async create(dto: CreateOrderDto) {
@@ -73,7 +79,7 @@ export class OrdersService {
       return created;
     });
 
-    this.broadcast('order_created', order);
+    this.broadcast('order_created', order as unknown as Record<string, unknown>);
     return order;
   }
 
@@ -123,7 +129,7 @@ export class OrdersService {
       return o;
     });
 
-    this.broadcast('order_updated', { orderId, status: newStatus });
+    this.broadcast('order_updated', { orderId, status: newStatus, updatedAt: new Date(), restaurantId });
     return updated;
   }
 
@@ -136,7 +142,11 @@ export class OrdersService {
     return this.updateStatus(orderId, next, restaurantId, userId);
   }
 
-  private broadcast(_event: string, _payload: any) {
-    // TODO: wire OrdersGateway once WebSocket module is built
+  private broadcast(event: string, payload: Record<string, unknown>) {
+    if (!this.gateway) return;
+    const restaurantId = payload['restaurantId'] as number | undefined;
+    if (restaurantId !== undefined) {
+      this.gateway.broadcastToRestaurant(restaurantId, event, payload);
+    }
   }
 }
